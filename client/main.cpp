@@ -5,6 +5,10 @@
 namespace ba = boost::asio;
 using ba::ip::tcp;
 
+const std::string kOK = "OK\n";
+const std::string kERR = "ERR";
+const size_t kMinSize = kERR.size();
+
 class Client {
  public:
   Client(tcp::socket sock)
@@ -20,35 +24,37 @@ class Client {
   }
 
   void do_read() {
-    while (true) {
-      enum { length = 40 };
-      char data[length];
-	  // TODO все что не влезло будет принято в следующий такт.
-      // Как можно принимать все что есть за один раз, или как правильно принимать?
-	  // в условии написано признак конца '\n', но ведь в ответе типа  
-	  //> INTERSECTION
-      //< 3,violation,proposal неявно /n
-      //< 4,quality,example неявно /n
-      //< 5,precision,lake неявно /n
-      //< OK  неявно /n
-	  // соответственно если выводить до символа '\n' то оставшаяся часть 
-	  // будет получена только после следующуго запроса пользователя
-	  // и этот смещние будет постоянно
-	  // как правильно надо получать сообщения
-      size_t len = _sock.read_some(ba::buffer(data));
-      std::cout << std::string{data, len};
-	  // TODO работает потому что для тестовых примеров ответ влезает в 40 или по
-      // последний символ в сообщении не выпадает на '\n'
-      if (std::string{data, len}.back() == '\n') {
-        break;
+    ba::read(_sock, s_buf,
+             std::bind(&Client::completion_condition, this,
+                       std::placeholders::_1, std::placeholders::_2));
+    std::cout << _answer << std::endl;
+    _answer.clear();
+    do_write();
+  }
+
+  std::size_t completion_condition(const boost::system::error_code &error,
+                                   std::size_t bytes_transferred) {
+    std::istream is(&s_buf);
+    std::string tmp;
+    tmp.resize(8);
+    while (is.readsome(tmp.data(), 8)) {
+      _answer += std::string(tmp.data(), is.gcount());
+    }
+    if (_answer.size() > kMinSize) {
+      if (_answer.substr(0, kERR.size()) == kERR && _answer.back() == '\n') {
+        return 0;
+      }
+      if (_answer.substr(_answer.size() - kOK.size(), kOK.size()) == kOK) {
+        return 0;
       }
     }
-    do_write();
+    return 8;
   }
 
  private:
   std::string _answer;
   tcp::socket _sock;
+  ba::streambuf s_buf;
 };
 
 int main(int argc, char *argv[]) {

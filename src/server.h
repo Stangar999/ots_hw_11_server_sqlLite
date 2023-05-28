@@ -7,16 +7,14 @@
 #include "request_handler.h"
 
 using boost::asio::ip::tcp;
-// namespace tc = boost::asio::ip;
+namespace ba = boost::asio;
 
 class Session : public std::enable_shared_from_this<Session> {
  public:
   Session(tcp::socket socket)
       : socket_(std::move(socket)),
-        _rh(),
-        _data(128, ' ') // TODO все что не влезло будет отправлено в следующий такт
-		// Как можно принимать все что есть за один раз, или как правильно принимать?
-		{}
+        _rh() {
+  }
 
   void start() {
     do_read();
@@ -25,18 +23,53 @@ class Session : public std::enable_shared_from_this<Session> {
  private:
   void do_read() {
     auto self(shared_from_this());
-    socket_.async_read_some(
-        boost::asio::buffer(_data),
+    ba::async_read(
+        socket_, s_buf,
+        std::bind(&Session::completion_condition, this, std::placeholders::_1,
+                  std::placeholders::_2),
         [this, self](boost::system::error_code ec, std::size_t length) {
           if (!ec) {
-            _cur_command.append(_data);
             std::string aswer = _rh.exec_query(std::move(_cur_command));
             _cur_command.clear();
-            _data.assign(128, ' ');
             do_write(std::move(aswer));
           }
         });
   }
+
+  std::size_t completion_condition(const boost::system::error_code &error,
+                                   std::size_t bytes_transferred) {
+    std::istream is(&s_buf);
+    std::string tmp;
+    tmp.resize(8);
+    _cur_command += _path_next_command;
+    _path_next_command.clear();
+    while (is.readsome(tmp.data(), 8)) {
+      std::string dmp = std::string(tmp.data(), is.gcount());
+      int end_pos = dmp.find("\\n");
+      if (end_pos >= 0) {
+        _cur_command += std::string(dmp.data(), end_pos + 2);
+        _path_next_command = dmp.substr(end_pos + 2);
+        return 0;
+      }
+      _cur_command += dmp;
+    }
+    return 8;
+  }
+
+  //  void do_read() {
+  //    auto self(shared_from_this());
+  //    socket_.async_read(
+  //        boost::asio::buffer(_data),
+  //        [this, self](boost::system::error_code ec, std::size_t length) {
+  //          if (!ec) {
+  //            _cur_command.append(_data);
+  //            std::string aswer = _rh.exec_query(std::move(_cur_command));
+  //            _cur_command.clear();
+  //            _data.assign(128, ' ');
+  //            do_write(std::move(aswer));
+  //          }
+  //        });
+  //  }
 
   void do_write(std::string aswer) {
     auto self(shared_from_this());
@@ -51,10 +84,9 @@ class Session : public std::enable_shared_from_this<Session> {
 
   tcp::socket socket_;
   RequestHandler _rh;
-  std::string _data;
-  //  enum { max_length = 1024 };
-  //  char data_[max_length];
+  ba::streambuf s_buf;
   std::string _cur_command;
+  std::string _path_next_command;
 };
 
 class Server {

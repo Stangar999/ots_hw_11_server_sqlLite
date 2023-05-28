@@ -50,7 +50,7 @@ std::string RequestHandler::exec_query(std::string query) {
   char *errmsg;
   std::optional<std::string> true_qwery = ParseQuery(std::move(query));
   if (!true_qwery) {
-    return "Bad query\n";
+    return "ERR Bad query\n";
   }
   std::string answer;
   int rc = sqlite3_exec(_handle, true_qwery.value().data(), WriteAnswer,
